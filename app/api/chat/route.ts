@@ -86,11 +86,31 @@ const AUTOMATION_ROUTINES: Record<string, () => { steps: Array<{ action: string;
 };
 
 export async function POST(req: Request) {
-  const { messages: uiMessages } = await req.json();
+  let messages: unknown;
+
+  try {
+    const body = await req.json();
+    messages = body.messages;
+  } catch {
+    return new Response(
+      JSON.stringify({ error: 'Invalid request body' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  if (!Array.isArray(messages)) {
+    return new Response(
+      JSON.stringify({ error: 'Messages must be an array' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
 
   const result = await streamText({
     model: google('gemini-2.5-flash-lite'),
-    messages: await convertToModelMessages(uiMessages),
+    messages: await convertToModelMessages(messages),
+    onError: ({ error }) => {
+      console.error('[IoT Orchestrator] AI Error:', error);
+    },
     system: `Eres el ORQUESTADOR AUTÓNOMO DE HARDWARE, un agente de IA avanzado que gestiona un laboratorio automatizado de IoT.
 
 TU RESPONSABILIDADES:
@@ -216,5 +236,16 @@ PROTOCOLO DE RESPUESTA:
     },
   });
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('quota')) {
+        return 'Cuota de IA excedida. Intenta de nuevo en un momento.';
+      }
+      if (msg.includes('rate limit')) {
+        return 'Demasiadas solicitudes. Espera unos segundos.';
+      }
+      return 'Error interno del orquestador. Intenta de nuevo.';
+    },
+  });
 }

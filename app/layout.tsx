@@ -15,6 +15,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "IoT Orchestrator | Zero to Agent",
   description: "Centro de Comando IoT - Hub de Orquestación de Hardware y Telemetría",
+  openGraph: {
+    title: "IoT Orchestrator | Zero to Agent",
+    description: "Centro de Comando IoT - Hub de Orquestación de Hardware y Telemetría",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

@@ -251,10 +251,9 @@ export default function Home() {
                     if (
                       part.type === 'tool-getdevicetelemetry' ||
                       part.type === 'tool-toggerelaypower' ||
-                      part.type === 'tool-executeautomationroutine' ||
-                      part.type.startsWith('tool-')
+                      part.type === 'tool-executeautomationroutine'
                     ) {
-                      const toolPart = part as {
+                      const toolPart = part as unknown as {
                         toolName: string;
                         input?: Record<string, unknown>;
                         state: string;
@@ -327,7 +326,7 @@ export default function Home() {
       {error && (
         <div className="mx-auto max-w-3xl px-6">
           <div className="mb-4 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-3 text-xs font-mono text-red-400">
-            Error: {error.message}
+            {error.message}
           </div>
         </div>
       )}
@@ -365,7 +364,7 @@ export default function Home() {
             </button>
           </div>
           <div className="mt-2 text-center text-xs text-zinc-600 font-mono">
-            Powered by Google Gemini 2.5 Flash \xB7 Vercel AI SDK
+            Powered by Google Gemini 2.5 Flash Lite \xB7 Vercel AI SDK
           </div>
         </form>
       </div>
