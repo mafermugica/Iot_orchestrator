@@ -89,7 +89,7 @@ export async function POST(req: Request) {
   const { messages: uiMessages } = await req.json();
 
   const result = await streamText({
-    model: google('gemini-2.5-flash'),
+    model: google('gemini-2.5-flash-lite'),
     messages: await convertToModelMessages(uiMessages),
     system: `Eres el ORQUESTADOR AUTÓNOMO DE HARDWARE, un agente de IA avanzado que gestiona un laboratorio automatizado de IoT.
 
