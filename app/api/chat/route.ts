@@ -118,7 +118,7 @@ export async function POST(req: Request) {
 
   const result = await streamText({
     model: google('gemini-2.5-flash'),
-    messages: await convertToModelMessages(sanitizedMessages),
+    messages: await convertToModelMessages(sanitizedMessages as unknown),
     onError: ({ error }) => {
       console.error('[IoT Orchestrator] AI Error:', error);
     },
