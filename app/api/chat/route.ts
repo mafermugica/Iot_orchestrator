@@ -87,10 +87,12 @@ const AUTOMATION_ROUTINES: Record<string, () => { steps: Array<{ action: string;
 
 export async function POST(req: Request) {
   let messages: unknown;
+  let linkedDevices: Array<{ id: string; name: string; type: string }> = [];
 
   try {
     const body = await req.json();
     messages = body.messages;
+    linkedDevices = body.linkedDevices ?? [];
   } catch {
     return new Response(
       JSON.stringify({ error: 'Invalid request body' }),
@@ -104,6 +106,33 @@ export async function POST(req: Request) {
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }
+
+  const knownDevices = [
+    { id: 'esp32-sensor-1', name: 'ESP32 Sensor Node', type: 'ESP32 Sensor Node' },
+    { id: 'raspberry-pi-hub', name: 'Raspberry Pi Hub', type: 'Raspberry Pi' },
+    { id: 'ender-3-v3-ke', name: 'Creality Ender-3 V3 KE', type: 'Impresora 3D' },
+  ];
+
+  const allDevices = [...knownDevices];
+  for (const d of linkedDevices) {
+    if (!knownDevices.find((k) => k.id === d.id)) {
+      allDevices.push(d);
+    }
+  }
+
+  const deviceListText = allDevices
+    .map((d) => {
+      const typeDesc: Record<string, string> = {
+        'ESP32 Sensor Node': 'Nodo de sensores ambientales (temperatura, humedad, WiFi, batería)',
+        'Raspberry Pi': 'Hub central (CPU, RAM, disco, red, dispositivos conectados)',
+        'Impresora 3D': 'Impresora 3D Creality (nozzle, bed, progreso de impresión, filamento)',
+        'Arduino': 'Controlador Arduino (pines, sensores conectados, firmware)',
+        'Módulo de Relé': 'Módulo de relés industriales (estado de canales, voltaje, corriente)',
+        'Custom': 'Dispositivo personalizado',
+      };
+      return `- ${d.id}: ${d.name} — ${typeDesc[d.type] || 'Dispositivo IoT personalizado'}`;
+    })
+    .join('\n');
 
   const result = await streamText({
     model: google('gemini-2.5-flash'),
@@ -119,9 +148,7 @@ TU RESPONSABILIDADES:
 3. COORDINACIÓN DE EQUIPOS: Ejecuta rutinas de automatización complejas que involucran múltiples dispositivos coordinados.
 
 DISPOSITIVOS DISPONIBLES:
-- esp32-sensor-1: Nodo de sensores ambientales (temperatura, humedad, WiFi, batería)
-- raspberry-pi-hub: Hub central (CPU, RAM, disco, red, dispositivos conectados)
-- ender-3-v3-ke: Impresora 3D Creality (nozzle, bed, progreso de impresión, filamento)
+${deviceListText}
 
 RUTINAS DE AUTOMATIZACIÓN DISPONIBLES:
 - "Preparar Área de Trabajo": Iluminación + verificación ambiental + precalentamiento maquinaria
