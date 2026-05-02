@@ -1,4 +1,4 @@
-import { google } from '@ai-sdk/google';
+import { gateway } from '@ai-sdk/gateway';
 import { streamText, tool, stepCountIs, convertToModelMessages } from 'ai';
 import { z } from 'zod';
 
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
   }
 
   const result = await streamText({
-    model: google('gemini-2.5-flash-lite'),
+    model: gateway('google/gemini-2.5-flash'),
     messages: await convertToModelMessages(messages),
     onError: ({ error }) => {
       console.error('[IoT Orchestrator] AI Error:', error);
