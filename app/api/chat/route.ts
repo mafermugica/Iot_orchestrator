@@ -245,6 +245,9 @@ PROTOCOLO DE RESPUESTA:
       if (msg.includes('rate limit')) {
         return 'Demasiadas solicitudes. Espera unos segundos.';
       }
+      if (msg.includes('API key expired') || msg.includes('API_KEY_INVALID') || msg.includes('invalid api key')) {
+        return 'Error de autenticación: La clave de API de Google no es válida o expiró. Contacta al administrador.';
+      }
       return 'Error interno del orquestador. Intenta de nuevo.';
     },
   });
