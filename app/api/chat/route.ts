@@ -105,20 +105,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const sanitizedMessages = (messages as unknown[]).map((msg: unknown) => {
-    const message = msg as Record<string, unknown>;
-    if (message.role === 'user' && Array.isArray(message.parts)) {
-      message.parts = (message.parts as unknown[]).filter((part: unknown) => {
-        const p = part as Record<string, unknown>;
-        return p.type === 'text';
-      });
-    }
-    return message;
-  });
-
   const result = await streamText({
     model: google('gemini-2.5-flash'),
-    messages: await convertToModelMessages(sanitizedMessages as unknown),
+    messages: await convertToModelMessages(messages),
     onError: ({ error }) => {
       console.error('[IoT Orchestrator] AI Error:', error);
     },
