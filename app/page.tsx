@@ -141,9 +141,6 @@ export default function Home() {
   const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
-      prepareBody: (body) => {
-        return { ...body, linkedDevices: devices };
-      },
     }),
     messages: initialMessages,
   });
@@ -185,7 +182,7 @@ export default function Home() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isStreaming) {
-      sendMessage({ text: input });
+      sendMessage({ text: input }, { body: { linkedDevices: devices } });
       setInput('');
     }
   };
@@ -228,7 +225,7 @@ export default function Home() {
   ];
 
   const handleQuickAction = (prompt: string) => {
-    sendMessage({ text: prompt });
+    sendMessage({ text: prompt }, { body: { linkedDevices: devices } });
   };
 
   const hasRestoredHistory = initialMessages.length > 0;
