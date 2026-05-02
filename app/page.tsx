@@ -1,8 +1,31 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport } from 'ai';
-import { useRef, useEffect, useState } from 'react';
+import { DefaultChatTransport, type UIMessage } from 'ai';
+import { useRef, useEffect, useState, useCallback } from 'react';
+
+const STORAGE_KEY_MESSAGES = 'iot-orchestrator-messages';
+const STORAGE_KEY_INPUT = 'iot-orchestrator-input';
+const MAX_HISTORY = 50;
+
+function loadMessages(): UIMessage[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_MESSAGES);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.slice(-MAX_HISTORY) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadInput(): string {
+  try {
+    return localStorage.getItem(STORAGE_KEY_INPUT) || '';
+  } catch {
+    return '';
+  }
+}
 
 interface ToolBadgeProps {
   toolName: string;
@@ -77,18 +100,40 @@ function ToolResult({ toolName, result }: { toolName: string; result: unknown })
 }
 
 export default function Home() {
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => loadInput());
+  const [initialMessages] = useState<UIMessage[]>(() => loadMessages());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
     }),
+    messages: initialMessages,
   });
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (messages.length === 0) {
+      localStorage.removeItem(STORAGE_KEY_MESSAGES);
+    } else {
+      try {
+        localStorage.setItem(STORAGE_KEY_MESSAGES, JSON.stringify(messages.slice(-MAX_HISTORY)));
+      } catch {
+        // localStorage full — silently ignore
+      }
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_INPUT, input);
+    } catch {
+      // silently ignore
+    }
+  }, [input]);
 
   const isStreaming = status === 'submitted' || status === 'streaming';
 
@@ -99,6 +144,13 @@ export default function Home() {
       setInput('');
     }
   };
+
+  const handleReset = useCallback(() => {
+    setMessages([]);
+    setInput('');
+    localStorage.removeItem(STORAGE_KEY_MESSAGES);
+    localStorage.removeItem(STORAGE_KEY_INPUT);
+  }, [setMessages]);
 
   const quickActions = [
     { label: '\u{1F4E1} Telemetr\xEDa ESP32', prompt: 'Mu\xE9strame la telemetr\xEDa del esp32-sensor-1' },
@@ -111,10 +163,7 @@ export default function Home() {
     sendMessage({ text: prompt });
   };
 
-  const handleReset = () => {
-    setMessages([]);
-    setInput('');
-  };
+  const hasRestoredHistory = initialMessages.length > 0;
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -175,7 +224,7 @@ export default function Home() {
       {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
         <div className="mx-auto max-w-3xl">
-          {messages.length === 0 && (
+          {messages.length === 0 && !hasRestoredHistory && (
             <div className="flex flex-col items-center justify-center gap-8 py-16">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-600/10 border border-emerald-500/20">
                 <svg
