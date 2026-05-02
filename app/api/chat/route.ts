@@ -105,9 +105,20 @@ export async function POST(req: Request) {
     );
   }
 
+  const sanitizedMessages = (messages as unknown[]).map((msg: unknown) => {
+    const message = msg as Record<string, unknown>;
+    if (message.role === 'user' && Array.isArray(message.parts)) {
+      message.parts = (message.parts as unknown[]).filter((part: unknown) => {
+        const p = part as Record<string, unknown>;
+        return p.type === 'text';
+      });
+    }
+    return message;
+  });
+
   const result = await streamText({
     model: gateway('google/gemini-2.5-flash'),
-    messages: await convertToModelMessages(messages),
+    messages: await convertToModelMessages(sanitizedMessages),
     onError: ({ error }) => {
       console.error('[IoT Orchestrator] AI Error:', error);
     },
@@ -247,6 +258,9 @@ PROTOCOLO DE RESPUESTA:
       }
       if (msg.includes('API key expired') || msg.includes('API_KEY_INVALID') || msg.includes('invalid api key')) {
         return 'Error de autenticación: La clave de API de Google no es válida o expiró. Contacta al administrador.';
+      }
+      if (msg.includes('image input') || msg.includes('does not support image')) {
+        return 'Este modelo no soporta imágenes. Envía tu comando como texto.';
       }
       return 'Error interno del orquestador. Intenta de nuevo.';
     },

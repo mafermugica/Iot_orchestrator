@@ -413,7 +413,7 @@ export default function Home() {
             </button>
           </div>
           <div className="mt-2 text-center text-xs text-zinc-600 font-mono">
-            Powered by Google Gemini 2.5 Flash Lite \xB7 Vercel AI SDK
+            Powered by Vercel AI Gateway \xB7 Google Gemini 2.5 Flash
           </div>
         </form>
       </div>
