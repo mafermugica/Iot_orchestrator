@@ -84,14 +84,6 @@ Vercel configurará automáticamente el CI/CD. Cada `git push` a `main` desencad
 └── package.json             # Dependencias y scripts
 ```
 
-## 🤝 Contributing
-
-1. Fork el proyecto
-2. Crea tu rama de feature (`git checkout -b feature/nueva-feature`)
-3. Commit tus cambios (`git commit -m 'feat: add nueva feature'`)
-4. Push a la rama (`git push origin feature/nueva-feature`)
-5. Abre un Pull Request
-
 ## 📄 License
 
 MIT License - ver [LICENSE](LICENSE) para más detalles.
