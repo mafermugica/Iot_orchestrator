@@ -2,7 +2,7 @@
 
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 
 const STORAGE_KEY_MESSAGES = 'iot-orchestrator-messages';
 const STORAGE_KEY_INPUT = 'iot-orchestrator-input';
@@ -57,12 +57,14 @@ function ToolBadge({ toolName, args }: ToolBadgeProps) {
     getDeviceTelemetry: '\u{1F4E1}',
     toggleRelayPower: '\u26A1',
     executeAutomationRoutine: '\u{1F504}',
+    scheduleTask: '\u23F1\uFE0F',
   };
 
   const labelMap: Record<string, string> = {
     getDeviceTelemetry: 'Consultando Telemetr\xEDa',
     toggleRelayPower: 'Controlando Rel\xE9',
     executeAutomationRoutine: 'Ejecutando Rutina',
+    scheduleTask: 'Programando Tarea',
   };
 
   const icon = iconMap[toolName] || '\u2699\uFE0F';
@@ -98,10 +100,26 @@ function ToolBadge({ toolName, args }: ToolBadgeProps) {
   );
 }
 
+const STATUS_DOT_COLOR: Record<string, string> = {
+  online: 'bg-emerald-500',
+  printing: 'bg-emerald-500',
+  completed: 'bg-emerald-500',
+  scheduled: 'bg-emerald-500',
+  idle: 'bg-yellow-500',
+  calibrating: 'bg-yellow-500',
+  offline: 'bg-red-500',
+  error: 'bg-red-500',
+};
+
 function ToolResult({ toolName, result }: { toolName: string; result: unknown }) {
   const resultStr = JSON.stringify(result, null, 2);
   const resultLines = resultStr.split('\n').slice(0, 8);
   const isTruncated = resultStr.split('\n').length > 8;
+
+  const status =
+    typeof result === 'object' && result !== null && 'status' in result
+      ? String((result as { status: unknown }).status)
+      : null;
 
   return (
     <div className="my-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-2">
@@ -110,6 +128,12 @@ function ToolResult({ toolName, result }: { toolName: string; result: unknown })
         <span className="text-xs font-mono text-zinc-500">
           resultado: {toolName}
         </span>
+        {status && (
+          <span className="ml-auto flex items-center gap-1.5">
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT_COLOR[status] ?? 'bg-zinc-500'}`} />
+            <span className="text-xs font-mono text-zinc-500 uppercase">{status}</span>
+          </span>
+        )}
       </div>
       <pre className="overflow-x-auto text-xs font-mono text-zinc-500 leading-relaxed">
         {resultLines.join('\n')}
@@ -133,6 +157,7 @@ export default function Home() {
   const [initialMessages] = useState<UIMessage[]>(() => loadMessages());
   const [devices, setDevices] = useState<LinkedDevice[]>(() => loadDevices());
   const [showDevices, setShowDevices] = useState(() => loadDevices().length > 0);
+  const [sidebarTab, setSidebarTab] = useState<'devices' | 'history'>('devices');
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [newDeviceName, setNewDeviceName] = useState('');
   const [newDeviceType, setNewDeviceType] = useState('ESP32 Sensor Node');
@@ -176,6 +201,31 @@ export default function Home() {
       // silently ignore
     }
   }, [devices]);
+
+  interface ActionHistoryEntry {
+    id: string;
+    toolName: string;
+    timestamp: string;
+  }
+
+  const actionHistory = useMemo<ActionHistoryEntry[]>(() => {
+    const entries: ActionHistoryEntry[] = [];
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue;
+      message.parts.forEach((part, index) => {
+        if (!part.type.startsWith('tool-')) return;
+        const toolPart = part as unknown as { toolName: string; state: string; output?: unknown };
+        if (toolPart.state !== 'output-available') return;
+        const output = toolPart.output as { timestamp?: string } | undefined;
+        entries.push({
+          id: `${message.id}-${index}`,
+          toolName: toolPart.toolName,
+          timestamp: output?.timestamp ?? new Date().toISOString(),
+        });
+      });
+    }
+    return entries.slice(-10).reverse();
+  }, [messages]);
 
   const isStreaming = status === 'submitted' || status === 'streaming';
 
@@ -221,6 +271,7 @@ export default function Home() {
   const quickActions = [
     { label: '\u{1F504} Preparar \xC1rea', prompt: 'Ejecuta la rutina "Preparar \xC1rea de Trabajo"' },
     { label: '\u{1F4A1} Modo Ahorro', prompt: 'Ejecuta la rutina "Modo Ahorro de Energ\xEDa"' },
+    { label: '\u{1F6A8} Modo Emergencia', prompt: 'Ejecuta la rutina "Modo Emergencia"' },
     ...deviceQuickActions,
   ];
 
@@ -268,11 +319,24 @@ export default function Home() {
             <span className="text-xs font-mono text-emerald-400">SYSTEM ONLINE</span>
           </div>
           <button
-            onClick={() => setShowDevices(!showDevices)}
+            onClick={() => {
+              setSidebarTab('devices');
+              setShowDevices(!showDevices || sidebarTab !== 'devices');
+            }}
             className="flex items-center gap-2 text-xs font-mono text-zinc-500 hover:text-emerald-400 transition-colors"
           >
             <span className="rounded bg-zinc-800 px-2 py-0.5">{devices.length}</span>
             <span className="hidden sm:inline">dispositivos</span>
+          </button>
+          <button
+            onClick={() => {
+              setSidebarTab('history');
+              setShowDevices(!showDevices || sidebarTab !== 'history');
+            }}
+            className="flex items-center gap-2 text-xs font-mono text-zinc-500 hover:text-emerald-400 transition-colors"
+          >
+            <span className="rounded bg-zinc-800 px-2 py-0.5">{actionHistory.length}</span>
+            <span className="hidden sm:inline">historial</span>
           </button>
           {messages.length > 0 && (
             <button
@@ -294,6 +358,49 @@ export default function Home() {
         {showDevices && (
           <aside className="w-72 border-r border-zinc-800 bg-zinc-900/50 overflow-y-auto flex-shrink-0">
             <div className="p-4">
+              <div className="flex items-center gap-1 mb-4 rounded-lg bg-zinc-800/50 p-1">
+                <button
+                  onClick={() => setSidebarTab('devices')}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-mono font-semibold uppercase tracking-wider transition-colors ${
+                    sidebarTab === 'devices' ? 'bg-emerald-600/20 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  Dispositivos
+                </button>
+                <button
+                  onClick={() => setSidebarTab('history')}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-mono font-semibold uppercase tracking-wider transition-colors ${
+                    sidebarTab === 'history' ? 'bg-emerald-600/20 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  Historial
+                </button>
+              </div>
+
+              {sidebarTab === 'history' && (
+                <div className="space-y-2">
+                  {actionHistory.length === 0 && (
+                    <div className="text-center py-8">
+                      <p className="text-xs text-zinc-600 font-mono">Sin acciones registradas</p>
+                      <p className="text-xs text-zinc-700 mt-1">Las últimas 10 aparecerán aquí</p>
+                    </div>
+                  )}
+                  {actionHistory.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-3"
+                    >
+                      <p className="text-sm font-mono text-zinc-200">{entry.toolName}</p>
+                      <p className="text-xs text-zinc-600 mt-1">
+                        {new Date(entry.timestamp).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {sidebarTab === 'devices' && (
+                <>
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-bold font-mono text-emerald-400 uppercase tracking-wider">
                   Mis Dispositivos
@@ -352,6 +459,8 @@ export default function Home() {
                   </div>
                 ))}
               </div>
+                </>
+              )}
             </div>
           </aside>
         )}
@@ -490,7 +599,8 @@ export default function Home() {
                         if (
                           part.type === 'tool-getdevicetelemetry' ||
                           part.type === 'tool-toggerelaypower' ||
-                          part.type === 'tool-executeautomationroutine'
+                          part.type === 'tool-executeautomationroutine' ||
+                          part.type === 'tool-scheduletask'
                         ) {
                           const toolPart = part as unknown as {
                             toolName: string;

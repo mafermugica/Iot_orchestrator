@@ -1,61 +1,13 @@
 import { google } from '@ai-sdk/google';
 import { streamText, tool, stepCountIs, convertToModelMessages } from 'ai';
 import { z } from 'zod';
+import { readTelemetry, setRelay, applyRoutineEffects } from '../../../lib/deviceState';
 
 export const maxDuration = 30;
 
-const TELEMETRY_DATABASE: Record<string, () => Record<string, unknown>> = {
-  'esp32-sensor-1': () => ({
-    deviceId: 'esp32-sensor-1',
-    deviceType: 'ESP32 Sensor Node',
-    cpuTemp: 42 + Math.round(Math.random() * 8),
-    ambientTemp: 22 + Math.round(Math.random() * 4),
-    humidity: 55 + Math.round(Math.random() * 15),
-    wifiSignal: -40 - Math.round(Math.random() * 25),
-    batteryLevel: 87 + Math.round(Math.random() * 10),
-    uptime: `${Math.floor(Math.random() * 72)}h ${Math.floor(Math.random() * 60)}m`,
-    lastCalibration: '2026-04-28T10:00:00Z',
-    status: 'online',
-  }),
-  'raspberry-pi-hub': () => ({
-    deviceId: 'raspberry-pi-hub',
-    deviceType: 'Raspberry Pi 5 - Central Hub',
-    cpuTemp: 52 + Math.round(Math.random() * 12),
-    ramUsage: `${40 + Math.round(Math.random() * 30)}%`,
-    diskUsage: `${23 + Math.round(Math.random() * 10)}%`,
-    cpuLoad: `${15 + Math.round(Math.random() * 40)}%`,
-    networkMbps: 85 + Math.round(Math.random() * 15),
-    connectedDevices: 4 + Math.floor(Math.random() * 3),
-    uptime: `${Math.floor(Math.random() * 168)}h ${Math.floor(Math.random() * 60)}m`,
-    status: 'online',
-  }),
-  'ender-3-v3-ke': () => ({
-    deviceId: 'ender-3-v3-ke',
-    deviceType: 'Creality Ender-3 V3 KE',
-    nozzleTemp: 200 + Math.round(Math.random() * 20),
-    bedTemp: 60 + Math.round(Math.random() * 5),
-    chamberTemp: 28 + Math.round(Math.random() * 4),
-    printProgress: `${Math.round(Math.random() * 100)}%`,
-    printSpeed: 150 + Math.round(Math.random() * 100),
-    filamentRemaining: `${60 + Math.round(Math.random() * 35)}%`,
-    estimatedTimeLeft: `${Math.floor(Math.random() * 120)} min`,
-    currentJob: 'bracket_v2.gcode',
-    status: Math.random() > 0.3 ? 'printing' : 'idle',
-  }),
-};
-
-function getGenericTelemetry(deviceId: string): Record<string, unknown> {
-  return {
-    deviceId,
-    deviceType: 'Unknown Device',
-    cpuTemp: 35 + Math.round(Math.random() * 30),
-    memoryUsage: `${30 + Math.round(Math.random() * 50)}%`,
-    networkLatency: `${5 + Math.round(Math.random() * 50)}ms`,
-    status: Math.random() > 0.15 ? 'online' : 'offline',
-    uptime: `${Math.floor(Math.random() * 48)}h ${Math.floor(Math.random() * 60)}m`,
-    lastPing: new Date().toISOString(),
-  };
-}
+// La telemetría y los relés ya no generan datos random sueltos aquí: leen y
+// escriben el estado simulado persistente de lib/deviceState.ts, para que la
+// demo sea coherente entre mensajes del chat (ver comentario en ese archivo).
 
 const AUTOMATION_ROUTINES: Record<string, () => { steps: Array<{ action: string; result: string; status: string }> }> = {
   'Preparar Área de Trabajo': () => ({
@@ -81,6 +33,14 @@ const AUTOMATION_ROUTINES: Record<string, () => { steps: Array<{ action: string;
       { action: 'Verificar precisión de temperatura', result: 'Error: ±0.2°C dentro de tolerancia', status: 'success' },
       { action: 'Test de señal WiFi', result: 'RSSI: -42dBm, packet loss: 0%', status: 'success' },
       { action: 'Actualizar firmware OTA', result: 'No hay actualizaciones pendientes', status: 'success' },
+    ],
+  }),
+  'Modo Emergencia': () => ({
+    steps: [
+      { action: 'Cortar energía de todos los relés', result: 'Relés RL-00 a RL-09 desactivados', status: 'success' },
+      { action: 'Detener impresión en curso (Ender-3 V3 KE)', result: 'Impresión pausada, nozzle enfriándose', status: 'success' },
+      { action: 'Aislar red del hub', result: 'Raspberry Pi 5: modo aislado, solo diagnóstico', status: 'success' },
+      { action: 'Enviar alerta de emergencia', result: 'Alerta ALT-EMRG enviada al canal de notificaciones', status: 'success' },
     ],
   }),
 };
@@ -154,13 +114,17 @@ RUTINAS DE AUTOMATIZACIÓN DISPONIBLES:
 - "Preparar Área de Trabajo": Iluminación + verificación ambiental + precalentamiento maquinaria
 - "Modo Ahorro de Energía": Apagado progresivo de equipos no esenciales
 - "Calibración de Sensores": Secuencia de calibración y verificación de todos los sensores
+- "Modo Emergencia": Corta energía de todos los relés, detiene impresiones y envía una alerta
 
 PROTOCOLO DE RESPUESTA:
 - Usa las herramientas disponibles para obtener datos reales antes de responder.
 - Presenta la información de forma estructurada y clara, usando formato tipo terminal/dashboard.
 - Si el usuario pide una rutina que no existe, sugiere las disponibles.
 - Mantén un tono profesional y técnico, como un sistema de control industrial.
-- Siempre confirma las acciones de cambio de estado (encender/apagar) antes de ejecutarlas si la orden es ambigua.`,
+- Siempre confirma las acciones de cambio de estado (encender/apagar) antes de ejecutarlas si la orden es ambigua.
+- Si un dispositivo está offline, dilo explícitamente en vez de inventar lecturas — la telemetría ya te lo indica en el campo "status".
+- Usa scheduleTask cuando el usuario pida programar/diferir una rutina para más adelante en vez de ejecutarla ya.
+- Si el usuario pide algo urgente de seguridad (fuego, sobrecalentamiento, fuga), sugiere ejecutar "Modo Emergencia".`,
 
     stopWhen: stepCountIs(5),
 
@@ -177,11 +141,7 @@ PROTOCOLO DE RESPUESTA:
         }),
         execute: async ({ deviceId }) => {
           await new Promise((resolve) => setTimeout(resolve, 800));
-          const fetcher = TELEMETRY_DATABASE[deviceId];
-          if (fetcher) {
-            return fetcher();
-          }
-          return getGenericTelemetry(deviceId);
+          return readTelemetry(deviceId);
         },
       }),
 
@@ -198,6 +158,7 @@ PROTOCOLO DE RESPUESTA:
         }),
         execute: async ({ targetNode, state }) => {
           await new Promise((resolve) => setTimeout(resolve, 600));
+          const device = setRelay(targetNode, state === 'on');
           const relayId = `RL-${Math.floor(Math.random() * 10)
             .toString()
             .padStart(2, '0')}`;
@@ -207,8 +168,9 @@ PROTOCOLO DE RESPUESTA:
 
           return {
             relayId,
-            targetNode,
+            targetNode: device.deviceId,
             state,
+            status: device.relayOn ? 'online' : 'offline',
             voltage,
             currentDraw,
             pulseDuration: '50ms',
@@ -245,6 +207,9 @@ PROTOCOLO DE RESPUESTA:
             };
           }
 
+          // aplica la rutina sobre el estado simulado persistente (relés, calibración, etc.)
+          applyRoutineEffects(routineName);
+
           const routineData = routine();
           const timestamp = new Date().toISOString();
           const duration = `${2 + Math.round(Math.random() * 8)}s`;
@@ -257,6 +222,49 @@ PROTOCOLO DE RESPUESTA:
             duration,
             steps: routineData.steps,
             summary: `${routineData.steps.filter((s) => s.status === 'success').length}/${routineData.steps.length} pasos completados exitosamente`,
+          };
+        },
+      }),
+
+      scheduleTask: tool({
+        description:
+          'Programa una rutina de automatización existente para que se ejecute más adelante, en vez de ejecutarla inmediatamente.',
+        inputSchema: z.object({
+          routineName: z
+            .string()
+            .describe(
+              'El nombre exacto de la rutina a programar. Disponibles: "Preparar Área de Trabajo", "Modo Ahorro de Energía", "Calibración de Sensores", "Modo Emergencia"'
+            ),
+          delayMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .max(1440)
+            .describe('Minutos de espera antes de ejecutar la rutina (entre 1 y 1440).'),
+        }),
+        // ponytail: no hay cron/hardware real — solo confirma la programación, no dispara la rutina más tarde.
+        execute: async ({ routineName, delayMinutes }) => {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          if (!AUTOMATION_ROUTINES[routineName]) {
+            const available = Object.keys(AUTOMATION_ROUTINES);
+            return {
+              error: `Rutina "${routineName}" no encontrada`,
+              availableRoutines: available,
+              message: `No se puede programar: la rutina solicitada no existe. Disponibles: ${available.join(', ')}`,
+            };
+          }
+
+          const scheduledFor = new Date(Date.now() + delayMinutes * 60_000).toISOString();
+
+          return {
+            taskId: `SCHED-${Date.now().toString(36).toUpperCase()}`,
+            routineName,
+            delayMinutes,
+            scheduledFor,
+            status: 'scheduled',
+            timestamp: new Date().toISOString(),
+            message: `Rutina "${routineName}" programada para ejecutarse en ${delayMinutes} minuto(s) (${scheduledFor}).`,
           };
         },
       }),
