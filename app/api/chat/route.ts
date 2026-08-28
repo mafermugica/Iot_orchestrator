@@ -1,13 +1,15 @@
 import { google } from '@ai-sdk/google';
 import { streamText, tool, stepCountIs, convertToModelMessages } from 'ai';
 import { z } from 'zod';
-import { readTelemetry, setRelay, applyRoutineEffects } from '../../../lib/deviceState';
+import { deviceAdapter } from '@/lib/devices';
 
 export const maxDuration = 30;
 
-// La telemetría y los relés ya no generan datos random sueltos aquí: leen y
-// escriben el estado simulado persistente de lib/deviceState.ts, para que la
-// demo sea coherente entre mensajes del chat (ver comentario en ese archivo).
+// Las tools nunca generan datos random ni tocan estado directamente: siempre
+// pasan por deviceAdapter (lib/devices/index.ts), que hoy es una simulación
+// coherente y persistente, y mañana podría ser hardware real sin cambiar
+// una línea de este archivo. Ver lib/devices/README.md.
+const STEP_DELAY_MS = 400;
 
 const AUTOMATION_ROUTINES: Record<string, () => { steps: Array<{ action: string; result: string; status: string }> }> = {
   'Preparar Área de Trabajo': () => ({
@@ -118,6 +120,9 @@ RUTINAS DE AUTOMATIZACIÓN DISPONIBLES:
 
 PROTOCOLO DE RESPUESTA:
 - Usa las herramientas disponibles para obtener datos reales antes de responder.
+- Si no conoces el ID exacto de un dispositivo, usa listDevices en vez de adivinarlo.
+- Usa getSystemStatus cuando te pidan un resumen general del laboratorio (online/offline, alertas, consumo).
+- Usa getRecentEvents cuando te pregunten qué ha pasado recientemente o por el historial de alertas.
 - Presenta la información de forma estructurada y clara, usando formato tipo terminal/dashboard.
 - Si el usuario pide una rutina que no existe, sugiere las disponibles.
 - Mantén un tono profesional y técnico, como un sistema de control industrial.
@@ -141,7 +146,7 @@ PROTOCOLO DE RESPUESTA:
         }),
         execute: async ({ deviceId }) => {
           await new Promise((resolve) => setTimeout(resolve, 800));
-          return readTelemetry(deviceId);
+          return deviceAdapter.getTelemetry(deviceId);
         },
       }),
 
@@ -158,7 +163,7 @@ PROTOCOLO DE RESPUESTA:
         }),
         execute: async ({ targetNode, state }) => {
           await new Promise((resolve) => setTimeout(resolve, 600));
-          const device = setRelay(targetNode, state === 'on');
+          const device = await deviceAdapter.setRelay(targetNode, state);
           const relayId = `RL-${Math.floor(Math.random() * 10)
             .toString()
             .padStart(2, '0')}`;
@@ -170,7 +175,7 @@ PROTOCOLO DE RESPUESTA:
             relayId,
             targetNode: device.deviceId,
             state,
-            status: device.relayOn ? 'online' : 'offline',
+            status: device.status,
             voltage,
             currentDraw,
             pulseDuration: '50ms',
@@ -195,7 +200,6 @@ PROTOCOLO DE RESPUESTA:
             ),
         }),
         execute: async ({ routineName }) => {
-          await new Promise((resolve) => setTimeout(resolve, 1200));
           const routine = AUTOMATION_ROUTINES[routineName];
 
           if (!routine) {
@@ -207,22 +211,35 @@ PROTOCOLO DE RESPUESTA:
             };
           }
 
-          // aplica la rutina sobre el estado simulado persistente (relés, calibración, etc.)
-          applyRoutineEffects(routineName);
+          try {
+            const routineData = routine();
 
-          const routineData = routine();
-          const timestamp = new Date().toISOString();
-          const duration = `${2 + Math.round(Math.random() * 8)}s`;
+            // delay proporcional a los pasos, para que se sienta como una
+            // secuencia real en el streaming del chat en vez de instantánea
+            await new Promise((resolve) => setTimeout(resolve, routineData.steps.length * STEP_DELAY_MS));
 
-          return {
-            routineName,
-            status: 'completed',
-            executionId: `EXEC-${Date.now().toString(36).toUpperCase()}`,
-            timestamp,
-            duration,
-            steps: routineData.steps,
-            summary: `${routineData.steps.filter((s) => s.status === 'success').length}/${routineData.steps.length} pasos completados exitosamente`,
-          };
+            // aplica la rutina sobre el estado simulado persistente (relés, calibración, etc.)
+            const effect = await deviceAdapter.executeRoutine(routineName);
+
+            const timestamp = new Date().toISOString();
+            const duration = `${((routineData.steps.length * STEP_DELAY_MS) / 1000).toFixed(1)}s`;
+
+            return {
+              routineName,
+              status: 'completed',
+              executionId: `EXEC-${Date.now().toString(36).toUpperCase()}`,
+              timestamp,
+              duration,
+              steps: routineData.steps,
+              affectedDevices: effect.affectedDevices,
+              summary: `${routineData.steps.filter((s) => s.status === 'success').length}/${routineData.steps.length} pasos completados exitosamente`,
+            };
+          } catch {
+            return {
+              error: 'internal',
+              message: `No se pudo ejecutar la rutina "${routineName}". Intenta de nuevo.`,
+            };
+          }
         },
       }),
 
@@ -266,6 +283,55 @@ PROTOCOLO DE RESPUESTA:
             timestamp: new Date().toISOString(),
             message: `Rutina "${routineName}" programada para ejecutarse en ${delayMinutes} minuto(s) (${scheduledFor}).`,
           };
+        },
+      }),
+
+      listDevices: tool({
+        description:
+          'Lista todos los dispositivos IoT disponibles en el laboratorio con su estado actual (online/offline/calibrando), sin necesidad de conocer sus IDs de antemano.',
+        inputSchema: z.object({}),
+        execute: async () => {
+          try {
+            const devices = await deviceAdapter.listDevices();
+            return { devices, count: devices.length };
+          } catch {
+            return { error: 'internal', message: 'No se pudo obtener la lista de dispositivos.' };
+          }
+        },
+      }),
+
+      getSystemStatus: tool({
+        description:
+          'Obtiene un resumen general del laboratorio: cuántos dispositivos están online/offline, alertas activas y consumo eléctrico estimado.',
+        inputSchema: z.object({}),
+        execute: async () => {
+          try {
+            return await deviceAdapter.getSystemStatus();
+          } catch {
+            return { error: 'internal', message: 'No se pudo calcular el estado del sistema.' };
+          }
+        },
+      }),
+
+      getRecentEvents: tool({
+        description:
+          'Consulta el registro de eventos recientes del laboratorio: cambios de estado (online/offline), alertas de temperatura, calibraciones y rutinas ejecutadas.',
+        inputSchema: z.object({
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(50)
+            .optional()
+            .describe('Cantidad máxima de eventos a devolver (por defecto 10).'),
+        }),
+        execute: async ({ limit }) => {
+          try {
+            const events = await deviceAdapter.getRecentEvents(limit ?? 10);
+            return { events, count: events.length };
+          } catch {
+            return { error: 'internal', message: 'No se pudo obtener el historial de eventos.' };
+          }
         },
       }),
     },

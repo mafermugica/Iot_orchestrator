@@ -3,6 +3,7 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import type { DeviceInfo, EventLogEntry, SystemStatus } from '@/lib/devices';
 
 const STORAGE_KEY_MESSAGES = 'iot-orchestrator-messages';
 const STORAGE_KEY_INPUT = 'iot-orchestrator-input';
@@ -58,6 +59,9 @@ function ToolBadge({ toolName, args }: ToolBadgeProps) {
     toggleRelayPower: '\u26A1',
     executeAutomationRoutine: '\u{1F504}',
     scheduleTask: '\u23F1\uFE0F',
+    listDevices: '\u{1F4CB}',
+    getSystemStatus: '\u{1F5A5}\uFE0F',
+    getRecentEvents: '\u{1F4DC}',
   };
 
   const labelMap: Record<string, string> = {
@@ -65,6 +69,9 @@ function ToolBadge({ toolName, args }: ToolBadgeProps) {
     toggleRelayPower: 'Controlando Rel\xE9',
     executeAutomationRoutine: 'Ejecutando Rutina',
     scheduleTask: 'Programando Tarea',
+    listDevices: 'Listando Dispositivos',
+    getSystemStatus: 'Consultando Estado del Sistema',
+    getRecentEvents: 'Consultando Eventos Recientes',
   };
 
   const icon = iconMap[toolName] || '\u2699\uFE0F';
@@ -109,6 +116,12 @@ const STATUS_DOT_COLOR: Record<string, string> = {
   calibrating: 'bg-yellow-500',
   offline: 'bg-red-500',
   error: 'bg-red-500',
+};
+
+const SEVERITY_COLOR: Record<string, string> = {
+  info: 'bg-zinc-500',
+  warning: 'bg-yellow-500',
+  critical: 'bg-red-500',
 };
 
 function ToolResult({ toolName, result }: { toolName: string; result: unknown }) {
@@ -157,7 +170,11 @@ export default function Home() {
   const [initialMessages] = useState<UIMessage[]>(() => loadMessages());
   const [devices, setDevices] = useState<LinkedDevice[]>(() => loadDevices());
   const [showDevices, setShowDevices] = useState(() => loadDevices().length > 0);
-  const [sidebarTab, setSidebarTab] = useState<'devices' | 'history'>('devices');
+  const [sidebarTab, setSidebarTab] = useState<'devices' | 'system' | 'history'>('devices');
+  const [labDevices, setLabDevices] = useState<DeviceInfo[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [recentEvents, setRecentEvents] = useState<EventLogEntry[]>([]);
+  const [systemError, setSystemError] = useState<string | null>(null);
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [newDeviceName, setNewDeviceName] = useState('');
   const [newDeviceType, setNewDeviceType] = useState('ESP32 Sensor Node');
@@ -201,6 +218,38 @@ export default function Home() {
       // silently ignore
     }
   }, [devices]);
+
+  useEffect(() => {
+    if (!showDevices || sidebarTab !== 'system') return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/devices');
+        if (!res.ok) throw new Error('request failed');
+        const data = (await res.json()) as {
+          devices: DeviceInfo[];
+          systemStatus: SystemStatus;
+          recentEvents: EventLogEntry[];
+        };
+        if (cancelled) return;
+        setLabDevices(data.devices);
+        setSystemStatus(data.systemStatus);
+        setRecentEvents(data.recentEvents);
+        setSystemError(null);
+      } catch {
+        if (!cancelled) setSystemError('No se pudo actualizar el estado del laboratorio.');
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [showDevices, sidebarTab]);
 
   interface ActionHistoryEntry {
     id: string;
@@ -330,6 +379,22 @@ export default function Home() {
           </button>
           <button
             onClick={() => {
+              setSidebarTab('system');
+              setShowDevices(!showDevices || sidebarTab !== 'system');
+            }}
+            className="flex items-center gap-2 text-xs font-mono text-zinc-500 hover:text-emerald-400 transition-colors"
+          >
+            <span
+              className={`rounded px-2 py-0.5 ${
+                systemStatus && systemStatus.activeAlerts > 0 ? 'bg-red-900/60 text-red-300' : 'bg-zinc-800'
+              }`}
+            >
+              {systemStatus?.activeAlerts ?? 0}
+            </span>
+            <span className="hidden sm:inline">alertas</span>
+          </button>
+          <button
+            onClick={() => {
               setSidebarTab('history');
               setShowDevices(!showDevices || sidebarTab !== 'history');
             }}
@@ -353,10 +418,10 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
         {/* DEVICE PANEL */}
         {showDevices && (
-          <aside className="w-72 border-r border-zinc-800 bg-zinc-900/50 overflow-y-auto flex-shrink-0">
+          <aside className="absolute inset-0 z-40 bg-zinc-950 overflow-y-auto sm:static sm:z-auto sm:w-72 sm:border-r sm:border-zinc-800 sm:bg-zinc-900/50 flex-shrink-0">
             <div className="p-4">
               <div className="flex items-center gap-1 mb-4 rounded-lg bg-zinc-800/50 p-1">
                 <button
@@ -368,6 +433,14 @@ export default function Home() {
                   Dispositivos
                 </button>
                 <button
+                  onClick={() => setSidebarTab('system')}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-mono font-semibold uppercase tracking-wider transition-colors ${
+                    sidebarTab === 'system' ? 'bg-emerald-600/20 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  Sistema
+                </button>
+                <button
                   onClick={() => setSidebarTab('history')}
                   className={`flex-1 rounded-md px-2 py-1.5 text-xs font-mono font-semibold uppercase tracking-wider transition-colors ${
                     sidebarTab === 'history' ? 'bg-emerald-600/20 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'
@@ -376,6 +449,76 @@ export default function Home() {
                   Historial
                 </button>
               </div>
+
+              {sidebarTab === 'system' && (
+                <div className="space-y-4">
+                  {systemError && (
+                    <p className="text-xs text-red-400 font-mono">{systemError}</p>
+                  )}
+
+                  {systemStatus && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-2.5">
+                        <p className="text-xs text-zinc-600 font-mono uppercase">Online</p>
+                        <p className="text-lg font-mono text-emerald-400">
+                          {systemStatus.onlineDevices}/{systemStatus.totalDevices}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-2.5">
+                        <p className="text-xs text-zinc-600 font-mono uppercase">Consumo</p>
+                        <p className="text-lg font-mono text-zinc-200">{systemStatus.estimatedConsumptionWatts}W</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <h3 className="text-xs font-bold font-mono text-zinc-500 uppercase tracking-wider mb-2">
+                      Dispositivos del Laboratorio
+                    </h3>
+                    <div className="space-y-2">
+                      {labDevices.map((device) => (
+                        <button
+                          key={device.deviceId}
+                          onClick={() => handleQuickAction(`Muéstrame la telemetría del dispositivo ${device.deviceId}`)}
+                          disabled={isStreaming}
+                          className="w-full text-left rounded-lg border border-zinc-800 bg-zinc-900/80 p-3 hover:border-emerald-800/50 transition-colors disabled:opacity-30"
+                        >
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-mono text-zinc-200 truncate">{device.deviceId}</p>
+                            <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT_COLOR[device.status] ?? 'bg-zinc-500'}`} />
+                          </div>
+                          <p className="text-xs text-zinc-600 mt-1 uppercase">{device.status}</p>
+                        </button>
+                      ))}
+                      {labDevices.length === 0 && !systemError && (
+                        <p className="text-xs text-zinc-600 font-mono">Cargando...</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-xs font-bold font-mono text-zinc-500 uppercase tracking-wider mb-2">
+                      Eventos Recientes
+                    </h3>
+                    <div className="space-y-2">
+                      {recentEvents.map((event) => (
+                        <div key={event.id} className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-2.5">
+                          <div className="flex items-start gap-2">
+                            <span className={`mt-1 inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${SEVERITY_COLOR[event.severity] ?? 'bg-zinc-500'}`} />
+                            <p className="text-xs text-zinc-300">{event.message}</p>
+                          </div>
+                          <p className="text-xs text-zinc-600 mt-1 font-mono">
+                            {new Date(event.timestamp).toLocaleTimeString()}
+                          </p>
+                        </div>
+                      ))}
+                      {recentEvents.length === 0 && !systemError && (
+                        <p className="text-xs text-zinc-600 font-mono">Sin eventos todavía</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {sidebarTab === 'history' && (
                 <div className="space-y-2">
@@ -600,7 +743,10 @@ export default function Home() {
                           part.type === 'tool-getdevicetelemetry' ||
                           part.type === 'tool-toggerelaypower' ||
                           part.type === 'tool-executeautomationroutine' ||
-                          part.type === 'tool-scheduletask'
+                          part.type === 'tool-scheduletask' ||
+                          part.type === 'tool-listdevices' ||
+                          part.type === 'tool-getsystemstatus' ||
+                          part.type === 'tool-getrecentevents'
                         ) {
                           const toolPart = part as unknown as {
                             toolName: string;

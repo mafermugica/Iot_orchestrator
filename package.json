@@ -6,12 +6,14 @@
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^3.0.109",
     "@ai-sdk/google": "^3.0.67",
     "@ai-sdk/react": "^3.0.176",
+    "@vercel/kv": "^3.0.0",
     "ai": "^6.0.174",
     "next": "16.2.4",
     "react": "19.2.4",
@@ -26,6 +28,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.0.0"
   }
 }
